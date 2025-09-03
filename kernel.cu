@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <iostream>
+#include <chrono>
 using namespace std;
 
 
@@ -30,7 +31,28 @@ void printMatrix(double* matrix, int w, int h) {
     }
 }
 
-__global__ void multiplyMatrices(
+void multiplyMatricesCPU(
+    double* a,
+    int w1,
+    int h1,
+    double* b,
+    int w2,
+    int h2,
+    double*& c
+) {
+    c = (double*)calloc(h1 * w2, sizeof(double));
+    for (int i = 0; i < h1; i++) {
+        for (int j = 0; j < w2; j++) {
+            double sum = 0;
+            for (int k = 0; k < w1; k++) {
+                sum += a[i * w1 + k] * b[k * w2 + j];
+            }
+            c[i * w2 + j] = sum;
+        }
+    }
+}
+
+__global__ void multiplyMatricesGPU(
     double* a,
     int w1,
     int h1,
@@ -51,27 +73,37 @@ __global__ void multiplyMatrices(
     }
 }
 
-int main() {
+int main(int argc, char** args) {
     srand(time(NULL));
-    int w1 = randomNumber(4, 5), h1 = randomNumber(3, 7), w2 = randomNumber(4, 6), h2 = w1;
+    int w1 = 1000, h1 = 1348, w2 = 1345, h2 = w1;
     double* x, * y, * z;
     initializeMatrix(x, w1, h1);
     initializeMatrix(y, w2, h2);
-    z = (double*)calloc(h1 * w2, sizeof(double));
 
-    double* d_x, * d_y, * d_z;
-    cudaMalloc(&d_x, w1 * h1 * sizeof(double));
-    cudaMemcpy(d_x, x, w1 * h1 * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMalloc(&d_y, w2 * h2 * sizeof(double));
-    cudaMemcpy(d_y, y, w2 * h2 * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMalloc(&d_z, w2 * h1 * sizeof(double));
-    dim3 threadsPerBlock(16, 16);
-    dim3 blocksPerGrid((w2 + 15) / 16, (h1 + 15) / 16);
-    multiplyMatrices<<<blocksPerGrid, threadsPerBlock>>>(d_x, w1, h1, d_y, w2, h2, d_z);
-    cudaMemcpy(z, d_z, w2 * h1 * sizeof(double), cudaMemcpyDeviceToHost);
-    cudaFree(d_x);
-    cudaFree(d_y);
-    cudaFree(d_z);
+    auto start = chrono::high_resolution_clock::now();
+    
+    if (argc < 2 || string(args[1]) != "--parallel") {
+        multiplyMatricesCPU(x, w1, h1, y, w2, h2, z);
+    } else {
+        z = (double*)calloc(h1 * w2, sizeof(double));
+        double* d_x, * d_y, * d_z;
+        cudaMalloc(&d_x, w1 * h1 * sizeof(double));
+        cudaMemcpy(d_x, x, w1 * h1 * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_y, w2 * h2 * sizeof(double));
+        cudaMemcpy(d_y, y, w2 * h2 * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_z, w2 * h1 * sizeof(double));
+        dim3 threadsPerBlock(16, 16);
+        dim3 blocksPerGrid((w2 + 15) / 16, (h1 + 15) / 16);
+        multiplyMatricesGPU << <blocksPerGrid, threadsPerBlock >> > (d_x, w1, h1, d_y, w2, h2, d_z);
+        cudaMemcpy(z, d_z, w2 * h1 * sizeof(double), cudaMemcpyDeviceToHost);
+        cudaFree(d_x);
+        cudaFree(d_y);
+        cudaFree(d_z);
+    }
+
+    auto end = chrono::high_resolution_clock::now();
+
+    chrono::duration<double, milli> duration = end - start;
 
     printMatrix(x, w1, h1);
     printMatrix(y, w2, h2);
@@ -79,6 +111,9 @@ int main() {
     free(x);
     free(y);
     free(z);
+
+    cout << "\n" << "Executed for " << duration.count() << " ms" << "\n";
+
     return 0;
 }
 
