@@ -75,35 +75,46 @@ __global__ void multiplyMatricesGPU(
 
 int main(int argc, char** args) {
     srand(time(NULL));
-    int w1 = 1000, h1 = 1348, w2 = 1345, h2 = w1;
+    int w1 = 250, h1 = 400, w2 = 300, h2 = w1;
     double* x, * y, * z;
     initializeMatrix(x, w1, h1);
     initializeMatrix(y, w2, h2);
 
-    auto start = chrono::high_resolution_clock::now();
+    float millis;
     
     if (argc < 2 || string(args[1]) != "--parallel") {
+        auto start = chrono::high_resolution_clock::now();
         multiplyMatricesCPU(x, w1, h1, y, w2, h2, z);
+        auto end = chrono::high_resolution_clock::now();
+        chrono::duration<double, milli> duration = end - start;
+        millis = duration.count();
     } else {
         z = (double*)calloc(h1 * w2, sizeof(double));
+
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+
         double* d_x, * d_y, * d_z;
         cudaMalloc(&d_x, w1 * h1 * sizeof(double));
         cudaMemcpy(d_x, x, w1 * h1 * sizeof(double), cudaMemcpyHostToDevice);
         cudaMalloc(&d_y, w2 * h2 * sizeof(double));
         cudaMemcpy(d_y, y, w2 * h2 * sizeof(double), cudaMemcpyHostToDevice);
         cudaMalloc(&d_z, w2 * h1 * sizeof(double));
+
+        cudaEventRecord(start);
         dim3 threadsPerBlock(16, 16);
         dim3 blocksPerGrid((w2 + 15) / 16, (h1 + 15) / 16);
         multiplyMatricesGPU << <blocksPerGrid, threadsPerBlock >> > (d_x, w1, h1, d_y, w2, h2, d_z);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&millis, start, stop);
+
         cudaMemcpy(z, d_z, w2 * h1 * sizeof(double), cudaMemcpyDeviceToHost);
         cudaFree(d_x);
         cudaFree(d_y);
         cudaFree(d_z);
     }
-
-    auto end = chrono::high_resolution_clock::now();
-
-    chrono::duration<double, milli> duration = end - start;
 
     printMatrix(x, w1, h1);
     printMatrix(y, w2, h2);
@@ -111,9 +122,7 @@ int main(int argc, char** args) {
     free(x);
     free(y);
     free(z);
-
-    cout << "\n" << "Executed for " << duration.count() << " ms" << "\n";
-
+    cout << "\n" << "Executed for " << millis << " ms" << "\n";
     return 0;
 }
 
